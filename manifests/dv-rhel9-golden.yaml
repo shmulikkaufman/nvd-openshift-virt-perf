@@ -1,0 +1,18 @@
+apiVersion: cdi.kubevirt.io/v1beta1
+kind: DataVolume
+metadata:
+  name: rhel9-guest
+  namespace: openshift-virtualization-os-images
+spec:
+  source:
+    registry:
+      url: "docker://registry.redhat.io/rhel9/rhel-guest-image@sha256:7005186c23b8f9bcaf7b068dc99b88e0fc33d54e4073c494f547c55835256374"
+      secretRef: redhat-registry-pull-secret
+  storage:
+    resources:
+      requests:
+        storage: 50Gi
+    storageClassName: lvms-vmstorage-immediate
+    accessModes:
+    - ReadWriteOnce
+    volumeMode: Block

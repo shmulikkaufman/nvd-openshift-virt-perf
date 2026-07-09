@@ -1,0 +1,98 @@
+apiVersion: kubevirt.io/v1
+kind: VirtualMachine
+metadata:
+  name: ubuntu2404-gpu-vm
+  namespace: gpu-vms
+  labels:
+    app: ubuntu2404-gpu-vm
+spec:
+  runStrategy: Always
+  dataVolumeTemplates:
+  - metadata:
+      name: ubuntu2404-gpu-vm-disk
+    spec:
+      source:
+        http:
+          url: "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img"
+      storage:
+        resources:
+          requests:
+            storage: 80Gi
+        storageClassName: lvms-vmstorage
+        accessModes:
+        - ReadWriteOnce
+        volumeMode: Block
+  template:
+    metadata:
+      labels:
+        kubevirt.io/vm: ubuntu2404-gpu-vm
+    spec:
+      architecture: amd64
+      nodeSelector:
+        gpu-vm-node: "2"
+      domain:
+        cpu:
+          cores: 16
+          sockets: 1
+          threads: 1
+        machine:
+          type: q35
+        memory:
+          guest: 64Gi
+        resources:
+          requests:
+            memory: 64Gi
+        devices:
+          disks:
+          - name: rootdisk
+            disk:
+              bus: virtio
+          - name: cloudinit
+            disk:
+              bus: virtio
+          interfaces:
+          - name: default
+            masquerade: {}
+          hostDevices:
+          - name: gpu-0
+            deviceName: nvidia.com/gpu
+          - name: gpu-1
+            deviceName: nvidia.com/gpu
+          - name: gpu-2
+            deviceName: nvidia.com/gpu
+          - name: gpu-3
+            deviceName: nvidia.com/gpu
+          - name: gpu-4
+            deviceName: nvidia.com/gpu
+          - name: gpu-5
+            deviceName: nvidia.com/gpu
+          - name: gpu-6
+            deviceName: nvidia.com/gpu
+          - name: gpu-7
+            deviceName: nvidia.com/gpu
+          - name: nvswitch-0
+            deviceName: nvidia.com/nvswitch
+          - name: nvswitch-1
+            deviceName: nvidia.com/nvswitch
+          - name: nvswitch-2
+            deviceName: nvidia.com/nvswitch
+          - name: nvswitch-3
+            deviceName: nvidia.com/nvswitch
+      networks:
+      - name: default
+        pod: {}
+      volumes:
+      - name: rootdisk
+        dataVolume:
+          name: ubuntu2404-gpu-vm-disk
+      - name: cloudinit
+        cloudInitNoCloud:
+          userData: |
+            #cloud-config
+            user: ubuntu
+            password: ubuntu123
+            chpasswd:
+              expire: false
+            ssh_pwauth: true
+            ssh_authorized_keys:
+            - <YOUR_SSH_PUBLIC_KEY>

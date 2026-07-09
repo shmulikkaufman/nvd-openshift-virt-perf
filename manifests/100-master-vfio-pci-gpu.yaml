@@ -1,0 +1,22 @@
+apiVersion: machineconfiguration.openshift.io/v1
+kind: MachineConfig
+metadata:
+  labels:
+    machineconfiguration.openshift.io/role: master
+  name: 100-master-vfio-pci-gpu
+spec:
+  config:
+    ignition:
+      version: 3.5.0
+    storage:
+      files:
+      - path: /etc/modprobe.d/vfio.conf
+        mode: 0644
+        contents:
+          # c29mdGRlcCBudmlkaWEgcHJlOiB2ZmlvLXBjaQpvcHRpb25zIHZmaW8tcGNpIGlkcz0xMGRlOjIzMzAK
+          # = "softdep nvidia pre: vfio-pci\noptions vfio-pci ids=10de:2330\n"
+          source: "data:text/plain;charset=utf-8;base64,c29mdGRlcCBudmlkaWEgcHJlOiB2ZmlvLXBjaQpvcHRpb25zIHZmaW8tcGNpIGlkcz0xMGRlOjIzMzAK"
+      - path: /etc/modules-load.d/vfio-pci.conf
+        mode: 0644
+        contents:
+          source: "data:text/plain;charset=utf-8;base64,dmZpby1wY2kK"

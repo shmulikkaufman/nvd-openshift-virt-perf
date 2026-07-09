@@ -1,0 +1,33 @@
+apiVersion: machineconfiguration.openshift.io/v1
+kind: MachineConfig
+metadata:
+  labels:
+    machineconfiguration.openshift.io/role: master
+  name: 99-master-permanent-fixes
+spec:
+  config:
+    ignition:
+      version: 3.5.0
+    storage:
+      files:
+      - path: /etc/systemd/system/kubelet.service.d/21-node-ip-override.conf
+        mode: 0644
+        contents:
+          # Regenerate this base64 for a different management NIC IP:
+          # printf '[Service]\nEnvironment="KUBELET_NODE_IP=<IP>" "KUBELET_NODE_IPS=<IP>"\n' | base64 -w0
+          source: "data:text/plain;charset=utf-8;base64,W1NlcnZpY2VdCkVudmlyb25tZW50PSJLVUJFTEVUX05PREVfSVA9MTcyLjE2LjAuMTMiICJLVUJFTEVUX05PREVfSVBTPTE3Mi4xNi4wLjEzIgo="
+    systemd:
+      units:
+      - name: sno-iptables-fix.service
+        enabled: true
+        contents: |
+          [Unit]
+          Description=Fix Kubernetes ClusterIP routing for host-network pods
+          After=network-online.target
+          Wants=network-online.target
+          [Service]
+          Type=oneshot
+          RemainAfterExit=yes
+          ExecStart=/bin/bash -c '/sbin/iptables -t nat -C OUTPUT -d 172.30.0.1/32 -p tcp --dport 443 -j DNAT --to-destination 172.16.0.13:6443 2>/dev/null || /sbin/iptables -t nat -I OUTPUT 1 -d 172.30.0.1/32 -p tcp --dport 443 -j DNAT --to-destination 172.16.0.13:6443'
+          [Install]
+          WantedBy=multi-user.target

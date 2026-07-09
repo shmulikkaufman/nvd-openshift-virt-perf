@@ -1,0 +1,97 @@
+apiVersion: kubevirt.io/v1
+kind: VirtualMachine
+metadata:
+  name: rhel9-gpu-vm
+  namespace: gpu-vms
+  labels:
+    app: rhel9-gpu-vm
+spec:
+  runStrategy: Always
+  dataVolumeTemplates:
+  - metadata:
+      name: rhel9-gpu-vm-disk
+    spec:
+      source:
+        pvc:
+          name: rhel9-guest
+          namespace: openshift-virtualization-os-images
+      storage:
+        resources:
+          requests:
+            storage: 50Gi
+        storageClassName: lvms-vmstorage-immediate
+        accessModes:
+        - ReadWriteOnce
+        volumeMode: Block
+  template:
+    metadata:
+      labels:
+        kubevirt.io/vm: rhel9-gpu-vm
+    spec:
+      architecture: amd64
+      domain:
+        cpu:
+          cores: 16
+          sockets: 1
+          threads: 1
+        machine:
+          type: q35
+        memory:
+          guest: 64Gi
+        resources:
+          requests:
+            memory: 64Gi
+        devices:
+          disks:
+          - name: rootdisk
+            disk:
+              bus: virtio
+          - name: cloudinit
+            disk:
+              bus: virtio
+          interfaces:
+          - name: default
+            masquerade: {}
+          hostDevices:
+          - name: gpu-0
+            deviceName: nvidia.com/gpu
+          - name: gpu-1
+            deviceName: nvidia.com/gpu
+          - name: gpu-2
+            deviceName: nvidia.com/gpu
+          - name: gpu-3
+            deviceName: nvidia.com/gpu
+          - name: gpu-4
+            deviceName: nvidia.com/gpu
+          - name: gpu-5
+            deviceName: nvidia.com/gpu
+          - name: gpu-6
+            deviceName: nvidia.com/gpu
+          - name: gpu-7
+            deviceName: nvidia.com/gpu
+          - name: nvswitch-0
+            deviceName: nvidia.com/nvswitch
+          - name: nvswitch-1
+            deviceName: nvidia.com/nvswitch
+          - name: nvswitch-2
+            deviceName: nvidia.com/nvswitch
+          - name: nvswitch-3
+            deviceName: nvidia.com/nvswitch
+      networks:
+      - name: default
+        pod: {}
+      volumes:
+      - name: rootdisk
+        dataVolume:
+          name: rhel9-gpu-vm-disk
+      - name: cloudinit
+        cloudInitNoCloud:
+          userData: |
+            #cloud-config
+            user: cloud-user
+            password: redhat123
+            chpasswd:
+              expire: false
+            ssh_pwauth: true
+            ssh_authorized_keys:
+            - <YOUR_SSH_PUBLIC_KEY>
