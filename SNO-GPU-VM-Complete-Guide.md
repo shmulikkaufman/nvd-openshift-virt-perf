@@ -1945,50 +1945,152 @@ virtctl ssh ubuntu@vm/ubuntu2404-gpu-vm/gpu-vms \
   --known-hosts='' -t '-o StrictHostKeyChecking=no'
 ```
 
-### 9.5 Install NVIDIA open kernel modules and CUDA on Ubuntu 24.04
+### 9.5 Install prerequisites on Ubuntu 24.04
 
-H100 (Hopper/GH100) requires the open kernel modules. Ubuntu 24.04 uses `apt`
-with the NVIDIA CUDA network repository.
+Target versions:
+
+| Component | Required version |
+|---|---|
+| OS | Ubuntu 24.04 LTS |
+| Kernel | 6.8.0-111-generic (or newer patch) |
+| NVIDIA Driver | 580.126.20 (open kernel modules) |
+| Fabric Manager | matching driver version |
+| CUDA Toolkit | 13.0 Update 2 (nvcc V13.0.88) |
+| DOCA-OFED | 3.2.1-044413 |
+
+#### Step 1 — NVIDIA driver (open kernel modules)
+
+H100/Hopper requires open kernel modules. Install from the NVIDIA CUDA repo to
+get the exact driver version rather than Ubuntu's default packages.
 
 ```bash
 # Add NVIDIA CUDA repository
-curl -fsSL \
-  https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb \
-  -o /tmp/cuda-keyring.deb
-sudo dpkg -i /tmp/cuda-keyring.deb
+curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/3bf863cc.pub \
+  | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-cuda.gpg
+echo "deb [signed-by=/usr/share/keyrings/nvidia-cuda.gpg] \
+  https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/ /" \
+  | sudo tee /etc/apt/sources.list.d/nvidia-cuda.list
+
 sudo apt-get update
+sudo apt-get install -y linux-headers-$(uname -r)
 
-# Install NVIDIA open kernel modules + CUDA toolkit
-sudo apt-get install -y nvidia-open cuda-toolkit
-
-# Determine installed driver version, then install matching Fabric Manager
-DRIVER_VER=$(dpkg -l 'nvidia-open-*' | awk '/^ii/{print $2}' | grep -oP '\d+' | head -1)
-sudo apt-get install -y nvidia-fabricmanager-${DRIVER_VER}
-
-# Enable Fabric Manager on boot
-sudo systemctl enable nvidia-fabricmanager
+# Install open kernel modules at exact version (check available: apt-cache madison nvidia-open-580)
+sudo apt-get install -y nvidia-open-580=580.126.20-1ubuntu1
 
 sudo reboot
 ```
 
-### 9.6 Verify drivers, NVSwitches, and Fabric Manager
+After reboot, verify the driver loaded:
+```bash
+cat /proc/driver/nvidia/version
+# Expected: NVIDIA UNIX Open Kernel Module ... 580.126.20
+```
 
-After reboot:
+#### Step 2 — NVIDIA Fabric Manager
+
+Fabric Manager is required for H100 SXM5 with NVSwitch. Without it `cuInit()`
+fails with `system not yet initialized`. The version must exactly match the driver.
 
 ```bash
-# Verify all 8 GPUs visible
-nvidia-smi -L
-# Expected: 8 lines, all NVIDIA H100 80GB HBM3
+# Check loaded driver version first
+cat /proc/driver/nvidia/version | awk '{print $8}'
 
-# Verify NVSwitch device nodes
-ls /dev/nvidia-nvswitch*
-# Expected: /dev/nvidia-nvswitch0 ... /dev/nvidia-nvswitch3
+# Install matching Fabric Manager (note: package name differs from nvidia-open-580)
+sudo apt-get install -y nvidia-fabricmanager=580.126.20-1
 
-# Verify Fabric Manager is running and connected
-sudo systemctl status nvidia-fabricmanager
+sudo systemctl enable nvidia-fabricmanager
+sudo systemctl start nvidia-fabricmanager
+sudo systemctl status nvidia-fabricmanager --no-pager
 # Expected: Active: active (running)
-# Log lines: "Connected to 1 node."  "Successfully configured all the available NVSwitches..."
+# Log: "Connected to 1 node." "Successfully configured all the available NVSwitches..."
 ```
+
+> **Version mismatch:** If the driver installed at a different patch version (e.g.
+> `580.173.02`), install Fabric Manager at the same version:
+> ```bash
+> DRIVER_VER=$(cat /proc/driver/nvidia/version | awk '{print $8}')
+> sudo apt-get install -y nvidia-fabricmanager=${DRIVER_VER}-1ubuntu1
+> ```
+
+#### Step 3 — CUDA Toolkit 13.0 Update 2
+
+```bash
+sudo apt-get install -y cuda-toolkit-13-0
+
+# Add to PATH
+echo 'export PATH=/usr/local/cuda-13.0/bin:$PATH' >> ~/.bashrc
+echo 'export LD_LIBRARY_PATH=/usr/local/cuda-13.0/lib64:$LD_LIBRARY_PATH' >> ~/.bashrc
+source ~/.bashrc
+```
+
+Verify:
+```bash
+nvcc --version
+# Expected: Cuda compilation tools, release 13.0, V13.0.88
+```
+
+#### Step 4 — DOCA-OFED 3.2.1-044413
+
+The exact build `044413` is at a different repo path than the default `3.2.1` repo.
+
+```bash
+# Add DOCA repo for exact build (reuse existing Mellanox GPG key from prior install,
+# or skip key verification with trusted=yes)
+echo "deb [trusted=yes] https://linux.mellanox.com/public/repo/doca/3.2.1-044413/ubuntu24.04/x86_64/ ./" \
+  | sudo tee /etc/apt/sources.list.d/doca.list
+
+sudo apt-get update
+sudo apt-get install -y doca-ofed=3.2.1-044413
+
+# Fix any dependency conflicts from prior DOCA version
+sudo apt-get -f install -y
+```
+
+Verify:
+```bash
+ofed_info -s
+# Expected: OFED-internal-25.10-1.7.1.409:
+
+dpkg -l doca-ofed | grep ^ii
+# Expected: doca-ofed  3.2.1-044413
+```
+
+### 9.6 Verify all prerequisites
+
+```bash
+# OS
+lsb_release -d
+
+# Kernel
+uname -r
+
+# NVIDIA driver version
+cat /proc/driver/nvidia/version | head -1
+
+# All 8 GPUs visible
+nvidia-smi -L
+
+# Fabric Manager running
+sudo systemctl status nvidia-fabricmanager --no-pager
+
+# CUDA version
+nvcc --version
+
+# DOCA-OFED version
+dpkg -l doca-ofed | grep ^ii
+ofed_info -s
+```
+
+Expected summary:
+
+| Component | Expected |
+|---|---|
+| OS | Ubuntu 24.04 LTS |
+| Driver | 580.x (open kernel module) |
+| GPUs | 8 × NVIDIA H100 SXM5 80GB |
+| Fabric Manager | active (running) |
+| CUDA | release 13.0, V13.0.88 |
+| DOCA-OFED | 3.2.1-044413 |
 
 ### 9.7 Build and run the CUDA smoke test
 
