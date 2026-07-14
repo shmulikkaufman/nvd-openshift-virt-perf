@@ -18,7 +18,7 @@ spec:
         resources:
           requests:
             storage: 80Gi
-        storageClassName: lvms-vmstorage
+        storageClassName: lvms-vmstorage-immediate
         accessModes:
         - ReadWriteOnce
         volumeMode: Block
@@ -27,8 +27,6 @@ spec:
       labels:
         kubevirt.io/vm: ubuntu2404-gpu-vm
     spec:
-      nodeSelector:
-        kubernetes.io/hostname: lp-nvaie-rh-gpu03
       architecture: amd64
       domain:
         cpu:

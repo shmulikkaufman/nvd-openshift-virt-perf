@@ -94,4 +94,4 @@ spec:
               expire: false
             ssh_pwauth: true
             ssh_authorized_keys:
-            - <YOUR_SSH_PUBLIC_KEY>
+            - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQDBU7aW/KKovroBJp5IBsJj4PhixblQ+bwo8nUnpWMt+ZEvW5p6AY1Gv5sbyfvvL1iHIucxt/9F9gp0MDdBzjVyX3OJc2Ktm60mLOIFC9FajCwzEkodaZtl+5dIjwTOLLlLQFZAVNvMlog9oFK2qNwnSwbnXCj8W23ciMrKiOI3wVecwLEhdP/NE5wwv/lU7UccsjFc7rlwg3q0rSHwL86pgPUERWxu7vSfE0lgLKwMM1G82Cqq/hbtO/AFW2s3czVZPee67TT0v2KkZBQnr2uy24uV3E77GVDaRkI/Fa90JJP4ryKqytkO2chaJ8B9EzvbigCDkMUkMCrFjTYwLaMdewnubFXyzJl2FI6G/CN8Qkq7Do7B2GVRCGfwavVO6Ei6TTCwfOqj9HnozhWL+XMgDtI/YmFHmwWqSDwB333UHJrTVuv4xjc4x8pUI+8G4RMay1crCXi1CsDg3T+V2kPsXMb7pH/N6+5wRTridhFCSCycrdR93zoN7VVTdOoe9PoTDqWPZaLtiNLo5U5s1mSBKPCKq+cralw3ojsod/7qaEwf9vFk/jkIQt+Q2n51ctoZLzpTcUBTwu23l6UCFo+PK783WETHyLO6+5Wu+5E1Fffy4U9fJlkvn0IzTmJd1cm9swCa/4UrO3X62Ic3plUhHxAVXQ3EnOo+rvq0/JmZKw== nvidia@lp-nvaie-rh-gpu01
