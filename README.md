@@ -1692,44 +1692,138 @@ oc debug node/lp-nvaie-rh-gpu03 -- chroot /host sh -c "
 > take effect. The ClusterPolicy is cluster-scoped, so disabling `driver` and
 > `vfioManager` applies to all nodes including gpu03.
 
+> **MCO and the gpu02 API server:** Applying worker-role MachineConfigs does **not**
+> affect gpu02's API server or etcd. Even though gpu02 carries the `worker` label,
+> the MachineConfigOperator manages it exclusively through the `master` MCP (which has
+> `machineCount=1` for the SNO control-plane). The `worker` MCP manages only gpu03.
+> gpu02 will not reboot when worker MachineConfigs are applied.
+
 ### 10.3 Configure LVMS storage on gpu03
 
-gpu03 needs its own LVMS device class. The existing `LVMCluster` on gpu02 uses the
-`vmstorage` device class — add gpu03's free NVMe as a second device class, or extend
-the existing cluster to include it.
+gpu03 needs its own dedicated LVMS device class. **Do not reuse the `vmstorage` device
+class** — that class uses a plain device path (`/dev/nvme4n1`) with no `nodeSelector`,
+so the vg-manager on gpu03 will attempt to adopt whichever disk is currently at that
+path, potentially conflicting with `vmstorage-gpu03`.
 
-First, identify the free disk on gpu03:
+Instead, add a second device class `vmstorage-gpu03` to the existing `LVMCluster`.
+
+#### Step 1 — Identify gpu03's free NVMe disk using its stable by-id path
+
+NVMe enumeration order is **not stable across reboots** — `/dev/nvme0n1` before a
+reboot may become `/dev/nvme4n1` after (especially after an MCO reboot that changes
+kernel args). Always use the `by-id` path for the device selector.
 
 ```bash
-oc debug node/lp-nvaie-rh-gpu03 -- chroot /host pvs 2>/dev/null
-oc debug node/lp-nvaie-rh-gpu03 -- chroot /host lsblk -o NAME,SIZE,TYPE,MOUNTPOINT
+# Find free NVMe disks on gpu03 (no OS partitions, no existing LVM/RAID)
+oc debug node/lp-nvaie-rh-gpu03 -- chroot /host lsblk -o NAME,SIZE,TYPE,MOUNTPOINT,FSTYPE
+
+# Get the stable by-id path for the target disk
+oc debug node/lp-nvaie-rh-gpu03 -- chroot /host sh -c "
+  ls -la /dev/disk/by-id/nvme-* | grep -v part | awk '{print \$9, \"->\", \$11}'"
+# Example output:
+# /dev/disk/by-id/nvme-SAMSUNG_MZWLO3T8HCLS-00A07_S794NC0X400569 -> /dev/nvme4n1
 ```
 
-Patch the existing LVMCluster to add gpu03's device (or create a second device class):
+> **Important:** The OS disk will have partitions mounted at `/boot` and `/sysroot`.
+> RAID members (`linux_raid_member`) must not be used. Pick the disk with no
+> mountpoints and no filesystem signature.
+
+#### Step 2 — Wipe the target disk if needed
+
+If the free disk has a prior LVMS signature (e.g. the VG was manually wiped but
+the PV signature remains), wipe it before adding to LVMS:
 
 ```bash
-# If gpu03 has the same VG name 'vmstorage' on its free disk (e.g. /dev/nvme4n1):
-oc patch lvmcluster lvmcluster -n openshift-storage --type=merge -p '{
-  "spec": {
-    "storage": {
-      "deviceClasses": [{
-        "name": "vmstorage",
-        "default": true,
-        "deviceSelector": {"paths": ["/dev/nvme4n1"]},
-        "thinPoolConfig": {"name": "thin-pool", "sizePercent": 90, "overprovisionRatio": 10},
-        "fstype": "xfs"
-      }]
-    }
-  }
-}'
-
-oc get lvmcluster -n openshift-storage
-# Expected: STATUS=Ready
+oc debug node/lp-nvaie-rh-gpu03 -- chroot /host \
+  wipefs -a /dev/disk/by-id/nvme-SAMSUNG_MZWLO3T8HCLS-00A07_S794NC0X400569
 ```
 
-The `lvms-vmstorage` and `lvms-vmstorage-immediate` StorageClasses are already
-present from Part 3 and are topology-aware — PVCs will be provisioned on whichever
-node the VM schedules to.
+#### Step 3 — Add the `vmstorage-gpu03` device class to LVMCluster
+
+```bash
+oc patch lvmcluster lvmcluster -n openshift-storage --type=json -p='[
+  {"op":"add","path":"/spec/storage/deviceClasses/-","value":{
+    "name": "vmstorage-gpu03",
+    "deviceSelector": {
+      "paths": ["/dev/disk/by-id/nvme-SAMSUNG_MZWLO3T8HCLS-00A07_S794NC0X400569"]
+    },
+    "thinPoolConfig": {"name": "thin-pool", "sizePercent": 90, "overprovisionRatio": 10},
+    "fstype": "xfs"
+  }}
+]'
+```
+
+> **Admission webhook note:** The webhook `vlvmcluster.kb.io` blocks changing the
+> `nodeSelector` on existing device classes ("NodeSelector can not be changed").
+> The workaround is to create a new device class (`vmstorage-gpu03`) rather than
+> trying to add a `nodeSelector` to the existing `vmstorage` class.
+
+Wait for the LVMVolumeGroup to appear and become Ready:
+
+```bash
+oc get lvmvolumegroup -n openshift-storage -w
+# Expected: vmstorage-gpu03  Ready
+
+# Verify the capacity annotation appeared on gpu03
+oc get node lp-nvaie-rh-gpu03 -o json | \
+  python3 -c "import json,sys; n=json.load(sys.stdin); \
+  print(n['metadata']['annotations'].get('capacity.topolvm.io/vmstorage-gpu03','NOT FOUND'))"
+# Expected: a large number (bytes available, e.g. 34447063777280 for a 3.1T disk)
+```
+
+> **NVMe path drift:** After the MCO reboot that applies IOMMU/vfio-pci kernel args,
+> the NVMe enumeration order may change. If the LVMVolumeGroup status is empty or
+> vg-manager logs show the device is not found, patch the deviceSelector to the
+> stable by-id path:
+>
+> ```bash
+> oc patch lvmcluster lvmcluster -n openshift-storage --type=json -p='[
+>   {"op":"replace",
+>    "path":"/spec/storage/deviceClasses/1/deviceSelector/paths/0",
+>    "value":"/dev/disk/by-id/nvme-SAMSUNG_MZWLO3T8HCLS-00A07_S794NC0X400569"}
+> ]'
+> ```
+>
+> The array index (`/1`) assumes `vmstorage-gpu03` is the second entry; adjust if needed.
+> Check vg-manager logs to confirm reconciliation: `oc logs -n openshift-storage -l app=vg-manager --since=2m`
+
+#### Step 4 — Create the `lvms-vmstorage-gpu03-immediate` StorageClass
+
+**Critical:** The StorageClass must use both `volumeBindingMode: Immediate` (CDI
+requires this for scratch PVC provisioning) **and** `allowedTopologies` (without
+`allowedTopologies`, the CSI provisioner considers both gpu02 and gpu03 as valid
+nodes, picks gpu02 first, and fails because `vmstorage-gpu03` doesn't exist there).
+
+**`manifests/lvms-gpu03-immediate.yaml`:**
+
+```yaml
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: lvms-vmstorage-gpu03-immediate
+provisioner: topolvm.io
+parameters:
+  csi.storage.k8s.io/fstype: xfs
+  topolvm.io/device-class: vmstorage-gpu03
+reclaimPolicy: Delete
+volumeBindingMode: Immediate
+allowVolumeExpansion: true
+allowedTopologies:
+- matchLabelExpressions:
+  - key: topology.topolvm.io/node
+    values:
+    - lp-nvaie-rh-gpu03
+```
+
+```bash
+oc apply -f manifests/lvms-gpu03-immediate.yaml
+
+# Verify
+oc get sc lvms-vmstorage-gpu03-immediate -o yaml | grep -A 6 allowedTopologies
+```
+
+The `topology.topolvm.io/node` label is set automatically by the topolvm node daemon
+on each node. Verify it exists: `oc get node lp-nvaie-rh-gpu03 -o jsonpath='{.metadata.labels.topology\.topolvm\.io/node}'`
 
 ### 10.4 Verify gpu03 advertises GPU and NVSwitch capacity
 
@@ -1749,7 +1843,12 @@ oc describe node lp-nvaie-rh-gpu03 | grep "nvidia.com"
 
 The VM spec is identical to the gpu02 VM with two differences:
 - `nodeSelector` pins it to gpu03 so it doesn't compete with the gpu02 VM for devices
-- StorageClass can use `lvms-vmstorage` (WaitForFirstConsumer is fine on a worker node)
+- StorageClass uses `lvms-vmstorage-gpu03-immediate` (Immediate + allowedTopologies for gpu03)
+
+> **Do not use `lvms-vmstorage` or `lvms-vmstorage-immediate` for gpu03 VMs.** Those
+> StorageClasses target the `vmstorage` device class which only exists on gpu02.
+> The CDI scratch PVC will fail with "failed to check volume existence" if it attempts
+> to provision on gpu02 using the `vmstorage-gpu03` device class.
 
 **`manifests/vm-ubuntu2404-gpu-gpu03.yaml`:**
 
@@ -1774,7 +1873,7 @@ spec:
         resources:
           requests:
             storage: 80Gi
-        storageClassName: lvms-vmstorage
+        storageClassName: lvms-vmstorage-gpu03-immediate
         accessModes:
         - ReadWriteOnce
         volumeMode: Block
@@ -1783,9 +1882,9 @@ spec:
       labels:
         kubevirt.io/vm: ubuntu2404-gpu-vm-gpu03
     spec:
-      architecture: amd64
       nodeSelector:
         kubernetes.io/hostname: lp-nvaie-rh-gpu03
+      architecture: amd64
       domain:
         cpu:
           cores: 16
@@ -1868,13 +1967,85 @@ oc get vmi ubuntu2404-gpu-vm-gpu03 -n gpu-vms -w
 ### 10.6 SSH and install drivers on the gpu03 VM
 
 ```bash
-virtctl ssh ubuntu@vm/ubuntu2404-gpu-vm-gpu03/gpu-vms \
-  --known-hosts='' -t '-o StrictHostKeyChecking=no'
+# Use -i to specify the key explicitly; virtctl will try the default key path
+virtctl ssh -i ~/.ssh/id_rsa \
+  -t "-o StrictHostKeyChecking=no" \
+  -t "-o UserKnownHostsFile=/dev/null" \
+  ubuntu@vm/ubuntu2404-gpu-vm-gpu03/gpu-vms \
+  -c "echo connected; uname -r"
 ```
 
-Inside the VM, follow the same steps as Part 9.4 (NVIDIA driver, Fabric Manager,
-CUDA Toolkit). The procedure is identical — the VM sees the same PCI device IDs
-regardless of which physical node it runs on.
+> **virtctl ssh syntax on gpu03:** The `-t` flag (not `--local-ssh-opts`) passes
+> options to the underlying SSH binary. Separate each option with its own `-t` flag.
+> Use `--known-hosts=''` only if the virtctl version supports an empty string; otherwise
+> use `-t "-o UserKnownHostsFile=/dev/null"`.
+
+Install NVIDIA driver, Fabric Manager, and load the module (no reboot required):
+
+```bash
+virtctl ssh -i ~/.ssh/id_rsa \
+  -t "-o StrictHostKeyChecking=no" -t "-o UserKnownHostsFile=/dev/null" \
+  ubuntu@vm/ubuntu2404-gpu-vm-gpu03/gpu-vms \
+  -c "
+set -e
+
+# 1. Add NVIDIA CUDA repo
+curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/3bf863cc.pub \
+  | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-cuda.gpg
+echo 'deb [signed-by=/usr/share/keyrings/nvidia-cuda.gpg] https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/ /' \
+  | sudo tee /etc/apt/sources.list.d/nvidia-cuda.list
+
+# 2. Update and install kernel headers + driver
+sudo apt-get update -q
+sudo apt-get install -y linux-headers-\$(uname -r)
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nvidia-driver-580-open=580.173.02-1ubuntu1
+
+# 3. Install Fabric Manager (version must exactly match driver)
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nvidia-fabricmanager=580.173.02-1ubuntu1
+
+# 4. Auto-load driver at boot
+echo nvidia | sudo tee /etc/modules-load.d/nvidia.conf
+
+# 5. Enable Fabric Manager service
+sudo systemctl enable nvidia-fabricmanager
+"
+```
+
+> **Package name:** Use `nvidia-driver-580-open` (the meta-package that pulls in
+> `nvidia-dkms-580-open` and all required libs), not `nvidia-open-580`. The latter
+> is a different package at an older version.
+
+After the DKMS build completes (~3-5 minutes), load the module and start FM without rebooting:
+
+```bash
+virtctl ssh -i ~/.ssh/id_rsa \
+  -t "-o StrictHostKeyChecking=no" -t "-o UserKnownHostsFile=/dev/null" \
+  ubuntu@vm/ubuntu2404-gpu-vm-gpu03/gpu-vms \
+  -c "
+sudo modprobe nvidia
+sudo modprobe nvidia-uvm
+sudo systemctl start nvidia-fabricmanager
+sleep 3
+nvidia-smi
+sudo systemctl status nvidia-fabricmanager --no-pager | head -10
+"
+```
+
+Expected `nvidia-smi` output: 8 × NVIDIA H100 80GB HBM3, driver 580.173.02, CUDA 13.0.
+
+Expected Fabric Manager log lines:
+```
+Connected to 1 node.
+Successfully configured all the available NVSwitches to route GPU NVLink traffic.
+```
+
+Verify NVLink bandwidth (18 links × 26.562 GB/s per GPU):
+```bash
+virtctl ssh -i ~/.ssh/id_rsa \
+  -t "-o StrictHostKeyChecking=no" -t "-o UserKnownHostsFile=/dev/null" \
+  ubuntu@vm/ubuntu2404-gpu-vm-gpu03/gpu-vms \
+  -c "nvidia-smi nvlink --status | head -25"
+```
 
 ---
 
@@ -1901,6 +2072,104 @@ ssh core@lp-nvaie-rh-gpu02 'sudo iptables -t nat -I OUTPUT 1 \
 
 oc delete pod -n openshift-ingress \
   -l ingresscontroller.operator.openshift.io/deployment-ingresscontroller=default
+```
+
+### NVMe device path changes after MCO reboot (LVMS device not found)
+
+**Symptom:** After a MachineConfig reboot of a worker node, the LVMVolumeGroup for a
+gpu03 device class shows empty status or vg-manager logs "device not found". The LVMCluster
+may enter a `Failed` state.
+
+**Root cause:** NVMe device enumeration order is non-deterministic across reboots. A disk
+at `/dev/nvme0n1` before the reboot may appear as `/dev/nvme4n1` after (especially when
+kernel arguments change, as with IOMMU enabling). The LVMCluster deviceSelector using a
+plain `/dev/nvme*` path now points to a different disk — possibly the OS disk or a RAID
+member.
+
+**Diagnosis:**
+
+```bash
+# Find the stable by-id path for the actual LVMS disk
+oc debug node/lp-nvaie-rh-gpu03 -- chroot /host sh -c "
+  pvs 2>/dev/null  # shows which device holds the VG
+  ls -la /dev/disk/by-id/nvme-* | grep -v part"
+
+# Check which nvme* path the LVMCluster deviceSelector currently uses
+oc get lvmcluster lvmcluster -n openshift-storage \
+  -o jsonpath='{.spec.storage.deviceClasses[*].deviceSelector}' | python3 -m json.tool
+```
+
+**Fix:** Patch the deviceSelector to use the stable `by-id` path:
+
+```bash
+# Replace /1 with the correct array index for your device class (0-indexed)
+oc patch lvmcluster lvmcluster -n openshift-storage --type=json -p='[
+  {"op":"replace",
+   "path":"/spec/storage/deviceClasses/1/deviceSelector/paths/0",
+   "value":"/dev/disk/by-id/nvme-SAMSUNG_MZWLO3T8HCLS-00A07_S794NC0X400569"}
+]'
+
+# Verify vg-manager reconciles
+oc logs -n openshift-storage -l app=vg-manager --since=2m | grep -E "modified|attached|error"
+```
+
+After the fix, check the capacity annotation appeared on the node:
+```bash
+oc get node lp-nvaie-rh-gpu03 -o json | \
+  python3 -c "import json,sys; n=json.load(sys.stdin); \
+  [print(k,'=',v) for k,v in n['metadata']['annotations'].items() if 'topolvm' in k]"
+```
+
+> **Prevention:** Always use `by-id` paths in LVMCluster deviceSelectors, never bare
+> `/dev/nvme*` paths. The `by-id` path is based on the disk's serial number and is
+> stable across reboots regardless of enumeration order.
+
+### CDI scratch PVC provisioned on the wrong node ("failed to check volume existence")
+
+**Symptom:** A VM DataVolume is stuck in `ImportScheduled` with the scratch PVC in
+`Pending`. The external-provisioner logs show:
+
+```
+"msg":"k8s.CreateVolume called","node":"lp-nvaie-rh-gpu02"
+```
+
+for a volume using a `vmstorage-gpu03` device class. The error is "failed to check
+volume existence".
+
+**Root cause:** The StorageClass lacks `allowedTopologies`. With `volumeBindingMode:
+Immediate`, the CSI provisioner considers all nodes that advertise the topolvm provisioner
+as valid candidates. It picks gpu02 first (from the `accessibility_requirements` preferred
+list). Since `vmstorage-gpu03` does not exist on gpu02, the LogicalVolume creation fails.
+
+**Fix:** Add `allowedTopologies` to the StorageClass to restrict it to gpu03:
+
+```bash
+oc patch sc lvms-vmstorage-gpu03-immediate --type=json -p='[
+  {"op":"add","path":"/allowedTopologies","value":[
+    {"matchLabelExpressions":[
+      {"key":"topology.topolvm.io/node","values":["lp-nvaie-rh-gpu03"]}
+    ]}
+  ]}
+]'
+```
+
+Then recover the stuck import by deleting the scratch PVC and the importer pod so CDI
+recreates them fresh:
+
+```bash
+# Delete the stuck scratch PVC
+oc delete pvc -n gpu-vms -l cdi.kubevirt.io/storage.condition.running.reason=Error 2>/dev/null
+# Or by name (it's named <prime-pvc-name>-scratch)
+oc delete pvc prime-<UUID>-scratch -n gpu-vms
+
+# Delete the importer pod to trigger CDI to reconcile
+oc delete pod -n gpu-vms -l cdi.kubevirt.io/importer
+```
+
+The provisioner will retry immediately. Verify the new scratch PVC lands on gpu03:
+```bash
+oc get logicalvolume <new-scratch-pv-name> -o yaml | grep nodeName
+# Expected: nodeName: lp-nvaie-rh-gpu03
 ```
 
 ### LVMCluster stuck in Degraded
