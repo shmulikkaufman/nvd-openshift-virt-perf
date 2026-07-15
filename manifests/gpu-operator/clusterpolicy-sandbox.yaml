@@ -1,0 +1,35 @@
+apiVersion: nvidia.com/v1
+kind: ClusterPolicy
+metadata:
+  name: gpu-cluster-policy
+spec:
+  # Enable GPU Operator support for VM passthrough (sandbox workloads).
+  # This replaces manual vfio-pci MachineConfigs — the sandbox device plugin
+  # handles vfio-pci binding and exposes model-specific resource names.
+  sandboxWorkloads:
+    enabled: true
+    defaultWorkload: vm
+  sandboxDevicePlugin:
+    enabled: true
+    # Exposes GPUs as: nvidia.com/<model>  e.g. nvidia.com/GH100GL_H100_SXM5_80GB
+    # Confirm exact name: oc describe node lp-nvaie-rh-gpu03 | grep nvidia
+  # The following components still run for container workloads on the host.
+  # If the node is dedicated to VM passthrough, set enabled: false for driver/toolkit.
+  driver:
+    enabled: true
+  toolkit:
+    enabled: true
+  devicePlugin:
+    enabled: true
+  dcgm:
+    enabled: true
+  dcgmExporter:
+    enabled: true
+  gfd:
+    enabled: true
+  migManager:
+    enabled: false
+  nodeStatusExporter:
+    enabled: true
+  operator:
+    defaultRuntime: crio
