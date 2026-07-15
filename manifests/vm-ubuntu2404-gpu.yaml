@@ -30,16 +30,16 @@ spec:
       architecture: amd64
       domain:
         cpu:
-          cores: 16
+          cores: 64
           sockets: 1
           threads: 1
         machine:
           type: q35
         memory:
-          guest: 64Gi
+          guest: 400Gi
         resources:
           requests:
-            memory: 64Gi
+            memory: 400Gi
         devices:
           disks:
           - name: rootdisk
