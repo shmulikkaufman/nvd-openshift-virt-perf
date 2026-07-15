@@ -58,30 +58,30 @@ spec:
           # Confirm names: oc describe node lp-nvaie-rh-gpu03 | grep nvidia
           gpus:
           - name: gpu-0
-            deviceName: nvidia.com/GH100GL_H100_SXM5_80GB
+            deviceName: nvidia.com/GH100_H100_SXM5_80GB
           - name: gpu-1
-            deviceName: nvidia.com/GH100GL_H100_SXM5_80GB
+            deviceName: nvidia.com/GH100_H100_SXM5_80GB
           - name: gpu-2
-            deviceName: nvidia.com/GH100GL_H100_SXM5_80GB
+            deviceName: nvidia.com/GH100_H100_SXM5_80GB
           - name: gpu-3
-            deviceName: nvidia.com/GH100GL_H100_SXM5_80GB
+            deviceName: nvidia.com/GH100_H100_SXM5_80GB
           - name: gpu-4
-            deviceName: nvidia.com/GH100GL_H100_SXM5_80GB
+            deviceName: nvidia.com/GH100_H100_SXM5_80GB
           - name: gpu-5
-            deviceName: nvidia.com/GH100GL_H100_SXM5_80GB
+            deviceName: nvidia.com/GH100_H100_SXM5_80GB
           - name: gpu-6
-            deviceName: nvidia.com/GH100GL_H100_SXM5_80GB
+            deviceName: nvidia.com/GH100_H100_SXM5_80GB
           - name: gpu-7
-            deviceName: nvidia.com/GH100GL_H100_SXM5_80GB
+            deviceName: nvidia.com/GH100_H100_SXM5_80GB
           hostDevices:
           - name: nvswitch-0
-            deviceName: nvidia.com/GH100_NVSwitch
+            deviceName: nvidia.com/GH100_H100_NVSWITCH
           - name: nvswitch-1
-            deviceName: nvidia.com/GH100_NVSwitch
+            deviceName: nvidia.com/GH100_H100_NVSWITCH
           - name: nvswitch-2
-            deviceName: nvidia.com/GH100_NVSwitch
+            deviceName: nvidia.com/GH100_H100_NVSWITCH
           - name: nvswitch-3
-            deviceName: nvidia.com/GH100_NVSwitch
+            deviceName: nvidia.com/GH100_H100_NVSWITCH
       networks:
       - name: default
         pod: {}

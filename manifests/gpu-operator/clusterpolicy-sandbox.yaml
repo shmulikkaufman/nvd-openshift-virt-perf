@@ -8,15 +8,27 @@ spec:
   # handles vfio-pci binding and exposes model-specific resource names.
   sandboxWorkloads:
     enabled: true
-    defaultWorkload: vm
+    defaultWorkload: container
   sandboxDevicePlugin:
     enabled: true
-    # Exposes GPUs as: nvidia.com/<model>  e.g. nvidia.com/GH100GL_H100_SXM5_80GB
-    # Confirm exact name: oc describe node lp-nvaie-rh-gpu03 | grep nvidia
-  # The following components still run for container workloads on the host.
-  # If the node is dedicated to VM passthrough, set enabled: false for driver/toolkit.
+    # Exposes GPUs as: nvidia.com/GH100_H100_SXM5_80GB (8 per node)
+    # Exposes NVSwitches as: nvidia.com/GH100_H100_NVSWITCH (4 per node)
+  # vfioManager loads vfio-pci module and binds GPU PCI devices on vm-passthrough nodes.
+  # Nodes are selected via: nvidia.com/gpu.workload.config=vm-passthrough label.
+  vfioManager:
+    enabled: true
   driver:
     enabled: true
+    manager:
+      env:
+      - name: ENABLE_GPU_POD_EVICTION
+        value: "true"
+      - name: ENABLE_AUTO_DRAIN
+        value: "false"
+      # Required for H100 SXM5 with NVSwitch: starts nvidia-fabricmanager in the driver container.
+      # Without this, NVLink fabric is not initialized and multi-GPU workloads fail.
+      - name: ENABLE_FABRIC_MANAGER
+        value: "true"
   toolkit:
     enabled: true
   devicePlugin:

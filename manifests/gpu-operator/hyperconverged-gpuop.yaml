@@ -18,8 +18,8 @@ spec:
   permittedHostDevices:
     pciHostDevices:
     - pciDeviceSelector: "10DE:2330"
-      resourceName: "nvidia.com/GH100GL_H100_SXM5_80GB"
+      resourceName: "nvidia.com/GH100_H100_SXM5_80GB"
       externalResourceProvider: true
     - pciDeviceSelector: "10DE:22A3"
-      resourceName: "nvidia.com/GH100_NVSwitch"
+      resourceName: "nvidia.com/GH100_H100_NVSWITCH"
       externalResourceProvider: true
