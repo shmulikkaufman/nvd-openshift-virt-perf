@@ -33,6 +33,7 @@ spec:
           cores: 64
           sockets: 1
           threads: 1
+          maxSockets: 1
         machine:
           type: q35
         memory:
